@@ -1,14 +1,13 @@
 {
   "id": "orion:containers",
   "version": "1.0.0",
-  "api": "0.1.0",
   "description": "Container storage/UI runtime (grades, open/close, sync). Soft base for inventory and block containers.",
   "authors": ["Orion"],
   "main": "OrionContainers.OrionContainersPlugin",
   "depend": [],
   "softdepend": [
     { "id": "orion:inventory", "load": "before", "versions": ["1.0.0", "99.0.0"] },
-    { "id": "orion:block-containers", "load": "before", "versions": ["1.0.0", "99.0.0"] }
+    { "id": "orion:block_containers", "load": "before", "versions": ["1.0.0", "99.0.0"] }
   ],
   "provides": ["orion:containers"]
 }
