@@ -1,15 +1,20 @@
-# VanillaContainers
+# Orion Containers
 
-Runtime de **container** (grade de slots, `Show`/`Close`, sync de conteúdo). Opt-in.
+Runtime **container** implementation (slot grid, `Show`/`Close`, content sync). Opt-in.
 
-Block chests/barrels: plugin **`VanillaContainerBlocks`**.
+- **Manifest id:** `orion:containers`
+- **Provides:** `orion:containers`
+
+Block chests and barrels are handled by the separate **orion:block_containers** plugin.
 
 ## Build
 
 ```bash
-dotnet build plugins/VanillaContainers/VanillaContainers.csproj
+dotnet build OrionContainers.csproj -c Release
 ```
 
-## Provides
+Deploy `plugin.json` and `orion.containers.dll` under `plugins/orion:containers/`.
 
-- `orion:containers`
+## CI
+
+GitHub Actions builds the plugin, runs `PackageReferenceTests`, checks out [OrionServerBE](https://github.com/OrionBedrock/OrionServerBE), and smoke-boots the server with this plugin loaded.

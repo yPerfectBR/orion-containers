@@ -1,25 +1,34 @@
 namespace Orion.Containers;
 
-using Orion.Item;
+using Orion.Api;
+using Orion.Api.Network;
 using Orion.Protocol.Nbt;
 using Orion.Protocol.Packets;
 using Orion.Protocol.Types;
+using ApiContainer = Orion.Api.Containers.IContainer;
+using ApiContainerType = Orion.Api.Containers.ContainerType;
+using IItemStack = Orion.Api.Items.IItemStack;
+using WireContainerType = Orion.Containers.ContainerType;
 
-using Player = Orion.Player.Player;
-
-public class Container : IContainer
+public class Container : ApiContainer
 {
-
-    // A list of all the players that are vewing the container
-    public Dictionary<Player, int> occupants = [];
+    // A list of all the players that are viewing the container
+    public Dictionary<IPlayer, int> occupants = [];
     private static int _nextContainerId = 1;
 
-    public ContainerType Type { get; }
+    public WireContainerType Type { get; }
     public int? Identifier { get; set; }
-    public List<ItemStack?> Storage { get; private set; }
+    public List<IItemStack?> Storage { get; private set; }
 
     public int EmptySlotsCount => Storage.Count(static item => item is null);
     public bool IsFull => EmptySlotsCount == 0;
+
+    ApiContainerType ApiContainer.Type => Type switch
+    {
+        WireContainerType.Inventory or WireContainerType.Hud => ApiContainerType.Inventory,
+        WireContainerType.Hand => ApiContainerType.Hotbar,
+        _ => ApiContainerType.Container
+    };
 
     public Container(ContainerType type, int size)
     {
@@ -29,7 +38,7 @@ public class Container : IContainer
         }
 
         Type = type;
-        Storage = Enumerable.Repeat<ItemStack?>(null, size).ToList();
+        Storage = Enumerable.Repeat<IItemStack?>(null, size).ToList();
     }
 
 
@@ -58,7 +67,7 @@ public class Container : IContainer
             return;
         }
 
-        List<ItemStack?> resized = Enumerable.Repeat<ItemStack?>(null, size).ToList();
+        List<IItemStack?> resized = Enumerable.Repeat<IItemStack?>(null, size).ToList();
         int copy = Math.Min(size, Storage.Count);
         for (int i = 0; i < copy; i++)
         {
@@ -76,7 +85,7 @@ public class Container : IContainer
     /// </summary>
     /// <param name="slot"></param>
     /// <returns></returns>
-    public ItemStack? GetItem(int slot)
+    public IItemStack? GetItem(int slot)
     {
         if (slot < 0 || slot >= Storage.Count)
         {
@@ -92,7 +101,7 @@ public class Container : IContainer
     /// </summary>
     /// <param name="slot"></param>
     /// <param name="item"></param>
-    public virtual void SetItem(int slot, ItemStack item)
+    public virtual void SetItem(int slot, IItemStack item)
     {
         ArgumentNullException.ThrowIfNull(item);
         if (slot < 0 || slot >= Storage.Count)
@@ -101,7 +110,7 @@ public class Container : IContainer
         }
 
         Storage[slot] = item;
-        if (item.StackSize == 0)
+        if (item.Count == 0)
         {
             Storage[slot] = null;
         }
@@ -116,24 +125,24 @@ public class Container : IContainer
     /// </summary>
     /// <param name="item"></param>
     /// <returns></returns>
-    public bool AddItem(ItemStack item)
+    public bool AddItem(IItemStack item)
     {
         ArgumentNullException.ThrowIfNull(item);
 
         for (int i = 0; i < Storage.Count; i++)
         {
-            ItemStack? existing = Storage[i];
-            if (existing is null || !existing.CanStackWith(item) || existing.StackSize >= existing.Type.MaxStackSize)
+            IItemStack? existing = Storage[i];
+            if (existing is null || !existing.CanStackWith(item) || existing.Count >= existing.Type.MaxStackSize)
             {
                 continue;
             }
 
-            int available = existing.Type.MaxStackSize - existing.StackSize;
-            int move = Math.Min(available, item.StackSize);
-            existing.IncrementStack((ushort)move);
-            item.DecrementStack((ushort)move);
+            int available = existing.Type.MaxStackSize - existing.Count;
+            int move = Math.Min(available, item.Count);
+            existing.Increment(move);
+            item.Decrement(move);
             UpdateSlot(i);
-            if (item.StackSize == 0)
+            if (item.Count == 0)
             {
                 return true;
             }
@@ -158,7 +167,7 @@ public class Container : IContainer
     /// <param name="slot"></param>
     /// <param name="amount"></param>
     /// <returns></returns>
-    public ItemStack? RemoveItem(int slot, int amount)
+    public IItemStack? RemoveItem(int slot, int amount)
     {
         if (slot < 0 || slot >= Storage.Count)
         {
@@ -169,15 +178,15 @@ public class Container : IContainer
             return null;
         }
 
-        ItemStack? item = Storage[slot];
+        IItemStack? item = Storage[slot];
         if (item is null)
         {
             return null;
         }
 
-        int removed = Math.Min(amount, item.StackSize);
-        item.DecrementStack((ushort)removed);
-        if (item.StackSize == 0)
+        int removed = Math.Min(amount, item.Count);
+        item.Decrement(removed);
+        if (item.Count == 0)
         {
             Storage[slot] = null;
         }
@@ -192,7 +201,7 @@ public class Container : IContainer
     /// <param name="slot"></param>
     /// <param name="amount"></param>
     /// <returns></returns>
-    public ItemStack? TakeItem(int slot, int amount)
+    public IItemStack? TakeItem(int slot, int amount)
     {
         if (slot < 0 || slot >= Storage.Count)
         {
@@ -203,23 +212,23 @@ public class Container : IContainer
             return null;
         }
 
-        ItemStack? source = Storage[slot];
+        IItemStack? source = Storage[slot];
         if (source is null)
         {
             return null;
         }
 
-        int taken = Math.Min(amount, source.StackSize);
-        if (taken == source.StackSize)
+        int taken = Math.Min(amount, source.Count);
+        if (taken == source.Count)
         {
             Storage[slot] = null;
             UpdateSlot(slot);
             return source;
         }
 
-        source.DecrementStack((ushort)taken);
+        source.Decrement(taken);
         UpdateSlot(slot);
-        return source.Clone((ushort)taken);
+        return source.Clone(taken);
     }
 
     /// <summary>
@@ -240,8 +249,8 @@ public class Container : IContainer
 
         Container target = otherContainer ?? this;
 
-        ItemStack? a = GetItem(slot);
-        ItemStack? b = target.GetItem(otherSlot);
+        IItemStack? a = GetItem(slot);
+        IItemStack? b = target.GetItem(otherSlot);
 
         Storage[slot] = b;
         target.Storage[otherSlot] = a;
@@ -302,7 +311,7 @@ public class Container : IContainer
             return;
         }
 
-        foreach ((Player player, int windowId) in occupants)
+        foreach ((IPlayer player, int windowId) in occupants)
         {
             if (!player.Spawned)
             {
@@ -321,7 +330,7 @@ public class Container : IContainer
                 NewItem = ToItemInstanceNew(Storage[slot])
             };
 
-            player.Send(packet);
+            player.Send(new OpaqueOutboundPacket(packet));
         }
     }
 
@@ -330,7 +339,7 @@ public class Container : IContainer
     /// </summary>
     public virtual void Update()
     {
-        foreach ((Player player, int windowId) in occupants)
+        foreach ((IPlayer player, int windowId) in occupants)
         {
             if (!player.Spawned)
             {
@@ -350,7 +359,7 @@ public class Container : IContainer
                 packet.Content.Add(ToItemInstanceNew(Storage[i]));
             }
 
-            player.Send(packet);
+            player.Send(new OpaqueOutboundPacket(packet));
         }
     }
 
@@ -358,9 +367,7 @@ public class Container : IContainer
     /// Shows the container to the player
     /// and returns the window id
     /// </summary>
-    /// <param name="player"></param>
-    /// <returns></returns>
-    public virtual int Show(Player player)
+    public virtual int Show(IPlayer player)
     {
         ArgumentNullException.ThrowIfNull(player);
         if (occupants.TryGetValue(player, out int existing))
@@ -375,7 +382,7 @@ public class Container : IContainer
                     ContainerEntityUniqueId = GetContainerEntityUniqueId()
                 };
 
-                player.Send(openPacket);
+                player.Send(new OpaqueOutboundPacket(openPacket));
                 Update();
             }
 
@@ -397,7 +404,7 @@ public class Container : IContainer
             };
             if (player.Spawned)
             {
-                player.Send(openPacket);
+                player.Send(new OpaqueOutboundPacket(openPacket));
             }
         }
 
@@ -409,14 +416,13 @@ public class Container : IContainer
     /// Closes the container,
     /// Done as Server to Client.
     /// </summary>
-    /// <param name="player"></param>
-    public virtual void Close(Player player)
+    public virtual void Close(IPlayer player)
     {
         ArgumentNullException.ThrowIfNull(player);
         _ = RemoveViewer(player, true);
     }
 
-    public IReadOnlyCollection<KeyValuePair<Player, int>> GetAllOccupants()
+    public IReadOnlyCollection<KeyValuePair<IPlayer, int>> GetAllOccupants()
     {
         return occupants;
     }
@@ -434,13 +440,13 @@ public class Container : IContainer
         ListTag items = new() { Name = "items" };
         for (int slot = 0; slot < GetSize(); slot++)
         {
-            ItemStack? item = GetItem(slot);
-            if (item is null || item.StackSize == 0)
+            IItemStack? item = GetItem(slot);
+            if (item is null || item.Count == 0)
             {
                 continue;
             }
 
-            CompoundTag entry = item.Serialize();
+            CompoundTag entry = SerializeItem(item);
             entry.Set("slot", new IntTag { Value = slot });
             items.Values.Add(entry);
         }
@@ -482,8 +488,8 @@ public class Container : IContainer
                 continue;
             }
 
-            ItemStack? item = ItemStack.Deserialize(itemTag);
-            if (item is null || item.StackSize == 0)
+            IItemStack? item = DeserializeItem(itemTag);
+            if (item is null || item.Count == 0)
             {
                 continue;
             }
@@ -492,17 +498,44 @@ public class Container : IContainer
         }
     }
 
+    /// <summary>
+    /// Builds a minimal NBT representation of an item stack (identifier + count + metadata).
+    /// This intentionally does not round-trip item traits/extra data, since those are only
+    /// available on the host's concrete item stack implementation.
+    /// </summary>
+    private static CompoundTag SerializeItem(IItemStack item)
+    {
+        CompoundTag tag = new();
+        tag.Set("id", new StringTag { Value = item.Type.Identifier });
+        tag.Set("count", new IntTag { Value = item.Count });
+        tag.Set("meta", new IntTag { Value = unchecked((int)item.Metadata) });
+        return tag;
+    }
+
+    private static IItemStack? DeserializeItem(CompoundTag tag)
+    {
+        StringTag? idTag = tag.Get<StringTag>("id");
+        if (idTag is null || string.IsNullOrWhiteSpace(idTag.Value))
+        {
+            return null;
+        }
+
+        int count = Math.Max(0, tag.Get<IntTag>("count")?.Value ?? 0);
+        uint metadata = unchecked((uint)(tag.Get<IntTag>("meta")?.Value ?? 0));
+        return Orion.Api.Items.Items.TryCreate(idTag.Value, count, metadata);
+    }
+
     protected virtual long GetContainerEntityUniqueId()
     {
         return -1;
     }
 
-    protected virtual bool CanOpen(Player player, int windowId)
+    protected virtual bool CanOpen(IPlayer player, int windowId)
     {
         return true;
     }
 
-    public bool RemoveViewer(Player player, bool sendClosePacket)
+    public bool RemoveViewer(IPlayer player, bool sendClosePacket)
     {
         ArgumentNullException.ThrowIfNull(player);
         if (!occupants.Remove(player, out int id))
@@ -510,7 +543,7 @@ public class Container : IContainer
             return false;
         }
 
-        player.openedContainers.Remove(id);
+        player.UnregisterOpenContainer(id);
         OnViewerRemoved(player, id);
 
         if (!sendClosePacket)
@@ -526,7 +559,7 @@ public class Container : IContainer
         };
         if (player.Spawned)
         {
-            player.Send(packet);
+            player.Send(new OpaqueOutboundPacket(packet));
         }
 
         return true;
@@ -544,7 +577,7 @@ public class Container : IContainer
 
     protected virtual byte GetFullContainerNameId()
     {
-        return Type == ContainerType.Inventory ? (byte)0x1B : (byte)7;
+        return Type == WireContainerType.Inventory ? (byte)0x1B : (byte)7;
     }
 
     protected FullContainerName GetFullContainerName(int windowId)
@@ -554,7 +587,7 @@ public class Container : IContainer
             ContainerId = GetFullContainerNameId()
         };
 
-        if (Type != ContainerType.Inventory)
+        if (Type != WireContainerType.Inventory)
         {
             name.DynamicContainerId = (uint)windowId;
         }
@@ -562,11 +595,11 @@ public class Container : IContainer
         return name;
     }
 
-    protected virtual void OnViewerAdded(Player player, int windowId)
+    protected virtual void OnViewerAdded(IPlayer player, int windowId)
     {
     }
 
-    protected virtual void OnViewerRemoved(Player player, int windowId)
+    protected virtual void OnViewerRemoved(IPlayer player, int windowId)
     {
     }
 
@@ -575,58 +608,48 @@ public class Container : IContainer
         return GetFullContainerNameId();
     }
 
-    protected static LegacyItem ToNetworkItem(ItemStack? item)
+    protected static LegacyItem ToNetworkItem(IItemStack? item)
     {
-        if (item is null || item.Type.NetworkId == 0 || item.StackSize == 0)
+        if (item is null || item.Type.NetworkId == 0 || item.Count == 0)
         {
             return new LegacyItem();
         }
 
-        int networkBlockId = ItemBlockRuntimeIds.Resolve(item.Type);
-
         return new LegacyItem
         {
             NetworkId = item.Type.NetworkId,
-            StackSize = item.StackSize,
+            StackSize = (ushort)item.Count,
             Metadata = unchecked((int)item.Metadata),
             ItemStackId = item.NetworkStackId,
-            NetworkBlockId = networkBlockId,
+            NetworkBlockId = 0,
             ExtraData = new ItemInstanceUserData
             {
-                Nbt = item.GetSerializedNbt(),
-                CanPlaceOn = item.ExtraData?.CanPlaceOn ?? [],
-                CanDestroy = item.ExtraData?.CanDestroy ?? [],
-                Ticking = item.ExtraData?.Ticking
+                Nbt = null,
+                CanPlaceOn = [],
+                CanDestroy = [],
+                Ticking = null
             }
         };
     }
 
-    protected static NetworkItemStackDescriptor ToItemInstanceNew(ItemStack? item)
+    protected static NetworkItemStackDescriptor ToItemInstanceNew(IItemStack? item)
     {
-        if (item is null || item.Type.NetworkId == 0 || item.StackSize == 0)
+        if (item is null || item.Type.NetworkId == 0 || item.Count == 0)
         {
             return new NetworkItemStackDescriptor();
         }
 
-        int runtimeId = ItemBlockRuntimeIds.Resolve(item.Type);
-
         return new NetworkItemStackDescriptor
         {
             NetworkId = item.Type.NetworkId,
-            Count = item.StackSize,
+            Count = (ushort)item.Count,
             Metadata = item.Metadata,
             StackNetworkId = item.NetworkStackId,
-            BlockRuntimeId = runtimeId,
-            Nbt = item.GetSerializedNbt(),
-            CanPlaceOn = item.ExtraData?.CanPlaceOn ?? [],
-            CanDestroy = item.ExtraData?.CanDestroy ?? [],
-            BlockingTick = item.ExtraData?.Ticking ?? 0
+            BlockRuntimeId = 0,
+            Nbt = null,
+            CanPlaceOn = [],
+            CanDestroy = [],
+            BlockingTick = 0
         };
     }
 }
-
-
-
-
-
-
